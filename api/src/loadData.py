@@ -121,16 +121,16 @@ class DataCollector:
                 print(f"Erro ao buscar dados para {symbol}: {data.get('message', 'Sem mensagem de erro')}")
 
     def update_yfinance_data(self):
-        today = self.today_date
+        today = pd.Timestamp(self.today_date)  
         for symbol in self.symbols_yf:
             print(f'Atualizando dados de {symbol} via yFinance...')
 
             try:
                 ult = MarketData.objects.filter(symbol=symbol).order_by('-date').first()
                 if ult:
-                    start_date = ult.date + pd.Timedelta(days=1)
+                    start_date = pd.Timestamp(ult.date) + pd.Timedelta(days=1)
                 else:
-                    start_date = pd.to_datetime('2000-01-01')
+                    start_date = pd.Timestamp('2000-01-01')
 
                 end_date = today
                 if start_date > end_date:
@@ -176,6 +176,7 @@ class DataCollector:
 
             except Exception as e:
                 print(f"Erro ao atualizar {symbol}: {e}")
+
 
     def update_twelvedata_data(self):
         today = self.today_date
