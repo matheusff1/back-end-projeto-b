@@ -13,8 +13,16 @@ django.setup()
 from api.models import MarketData  
 
 API_KEY = TWELVE_DATA_API_KEY  
-SYMBOLS_YF = ['PETR4.SA', 'BRL=X', 'BTC-USD', 'AAPL', '^BVSP', '^GSPC', '^IXIC','BZ=F','GC=F']
+
 SYMBOLS_TD = ['PETR4', 'BRL/USD', 'BTC/USD', 'AAPL', 'XAU/USD', 'BVSP', 'GSPC', 'IXIC']
+SYMBOLS_YF = [
+    'PETR4.SA', 'BRL=X', 'BTC-USD', 'AAPL', '^BVSP', '^GSPC', '^IXIC', 'BZ=F', 'GC=F',
+    'VALE3.SA', 'ITUB4.SA', 'B3SA3.SA', 'WEGE3.SA', 'BBAS3.SA', 'ABEV3.SA', 'RENT3.SA',
+    'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'NVDA', 'META', 'JNJ', 'DIS',
+    'BABA', 'TSM', 'SAP.DE', 'NESN.SW', '7203.T', 'RDSA.AS', 'BP.L', 'TM',
+    'CL=F', 'NG=F', 'SI=F', 'ZC=F', 'ZS=F'
+]
+
 
 PERIOD_YF = 'max'
 INTERVAL_YF = '1d'

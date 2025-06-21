@@ -18,3 +18,20 @@ class MarketData(models.Model):
         verbose_name_plural = 'Market Data Records'
     def __str__(self):
         return f"{self.symbol} - {self.date} - Close: {self.close}"
+    
+
+class Prediction(models.Model):
+    date = models.DateField()
+    results = models.JSONField()
+    symbol = models.CharField(max_length=10)
+    prediction = models.JSONField(default=list)
+    
+    class Meta:
+        db_table = 'predictions'
+        unique_together = ('date', 'symbol')
+        ordering = ['date']
+        verbose_name = 'Prediction'
+        verbose_name_plural = 'Predictions'
+    
+    def __str__(self):
+        return f"{self.symbol} - {self.date} - Prediction: {self.prediction}"
