@@ -20,7 +20,7 @@ models_cfg = {
         'epochs': 60,
         'batch_size': 64,
         'scaler_type': 'minmax',
-        'train_ratio': 0.9,
+        'train_ratio': 0.90,
         'activation': 'tanh',
         'callbacks': [
             EarlyStopping(monitor='val_mae', baseline=0.05,patience=20, restore_best_weights=True)
@@ -34,7 +34,7 @@ models_cfg = {
         'epochs': 60,
         'batch_size': 32,
         'scaler_type': 'minmax',
-        'train_ratio': 0.9,
+        'train_ratio': 0.90,
         'activation': 'relu',
         'callbacks': [
             EarlyStopping(monitor='val_mae', baseline=0.05,patience=20, restore_best_weights=True)
@@ -57,7 +57,7 @@ model_af_relu = Sequential([
 
 
 class PredictionModel:
-    def __init__(self, model, callbacks, df, window_size, epochs, batch_size, steps_out, pred_seq, multi_output=False, train_ratio=0.9, scaler_type='minmax'):
+    def __init__(self, model, callbacks, df, window_size, epochs, batch_size, steps_out, pred_seq, multi_output=False, train_ratio=0.90, scaler_type='minmax'):
         self.df = df
         self.scaler_type = scaler_type
         self.model = clone_model(model)
