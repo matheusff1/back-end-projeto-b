@@ -178,7 +178,7 @@ class PredictionModel:
         train_X, test_X, train_y, test_y, scaler_X, scaler_y = self.process_data()
         self.fit_model(train_X, train_y, test_X, test_y)
 
-        last_data = train_X[-1]
+        last_data = test_X[-1]
         predictions = self.predict(last_data, scaler_y)
 
         return {
