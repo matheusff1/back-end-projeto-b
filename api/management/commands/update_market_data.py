@@ -8,4 +8,7 @@ class Command(BaseCommand):
         print("Iniciando atualização diária...")
         collector = DataCollector()
         collector.update_yfinance_data()
+        collector.update_fred_data()
+        collector.update_cds_data()
+        collector.update_bacen_data()
         print("Atualização finalizada.")
