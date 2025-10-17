@@ -1,4 +1,6 @@
 from django.db import models
+from django.conf import settings
+
 
 
 #COLUNAS DE MARKET DATA: Date	Close	High	Low	Open	Volume	Symbol
@@ -35,3 +37,35 @@ class Prediction(models.Model):
     
     def __str__(self):
         return f"{self.symbol} - {self.date} - Prediction: {self.prediction}"
+    
+
+
+
+class Portfolio(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='portfolios'
+    )
+    name = models.CharField(max_length=150)
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    assets = models.JSONField(default=list)
+
+    initial_distribution = models.JSONField(default=dict)
+
+    current_distribution = models.JSONField(default=dict)
+
+    initial_balance = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+
+    current_balance = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+
+    class Meta:
+        db_table = 'portfolio'
+        verbose_name = 'Portfolio'
+        verbose_name_plural = 'Portfolios'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.name} - {self.user.email}"

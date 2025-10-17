@@ -274,14 +274,35 @@ class DataCollector:
             url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados?formato=csv&dataInicial={data_inicial}&dataFinal={data_final}"
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(url, headers=headers)
-            df = pd.read_csv(io.StringIO(response.text), sep=';')
+
+            if response.status_code != 200 or not response.text.strip():
+                print(f"Erro ao baixar série {serie} ({symbol}): resposta vazia ou inválida. Status {response.status_code}")
+                return pd.DataFrame(columns=['Date', 'Symbol', 'Close'])
+
+            text = response.text.strip()
+
+            if text.startswith("<") and "html" in text.lower():
+                print(f"Erro ao baixar série {serie} ({symbol}): resposta HTML recebida.")
+                print(text[:200])
+                return pd.DataFrame(columns=['Date', 'Symbol', 'Close'])
+
+            try:
+                df = pd.read_csv(io.StringIO(text), sep=';', on_bad_lines='skip')
+            except pd.errors.ParserError as e:
+                print(f"Erro ao ler CSV da série {serie} ({symbol}): {e}")
+                print(text[:200])
+                return pd.DataFrame(columns=['Date', 'Symbol', 'Close'])
 
             df.columns = [c.strip().lower() for c in df.columns]
-            df.rename(columns={'data': 'Date', 'valor': 'Close'}, inplace=True)
+            if not {'data', 'valor'}.issubset(df.columns):
+                print(f"CSV inesperado para série {serie} ({symbol}). Colunas: {df.columns}")
+                return pd.DataFrame(columns=['Date', 'Symbol', 'Close'])
 
-            df['Date'] = pd.to_datetime(df['Date'], dayfirst=True)
+            df.rename(columns={'data': 'Date', 'valor': 'Close'}, inplace=True)
+            df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
             df['Close'] = df['Close'].astype(str).str.replace(',', '.').astype(float)
             df['Symbol'] = symbol
+            df = df.dropna(subset=['Date', 'Close'])
 
             return df[['Date', 'Symbol', 'Close']]
 

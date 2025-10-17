@@ -1,3 +1,4 @@
+from datetime import timedelta
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 import pandas as pd
@@ -8,86 +9,516 @@ from .src.RiskMeasurements import *
 from .src.chat_bot_connection import get_chat_analysis
 import json
 import traceback
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from .models import Portfolio
+from decimal import Decimal, InvalidOperation
 
-def get_sharpe_ratio(request, symb):
+
+ALLOWED_SYMBOLS = [
+    'VALE3.SA',
+    'PETR4.SA',
+    'ITUB4.SA',
+    'BBDC4.SA',
+    'ABEV3.SA',
+    'WEGE3.SA', 
+    'B3SA3.SA', 
+    'ITSA4.SA', 
+    'CSAN3.SA', 
+    'BRFS',
+    'AAPL',
+    'NVDA',
+    'MSFT',
+    'AMZN',
+    'GOOGL',
+    'META', 
+    'TSLA', 
+    'UNH', 
+    'DHR', 
+    'SPGI']
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_portfolio(request):
+    user = request.user
+    data = request.data
+
+    name = data.get('name')
+    description = data.get('description', '')
+    assets = data.get('assets', [])
+
+    if not name:
+        return Response({"error": "Portfolio name is required."}, status=400)
+
+    if not assets or not isinstance(assets, list):
+        return Response({"error": "Assets list is required and must be a list."}, status=400)
+
+    total_value = Decimal('0')
+    asset_values = {}
+
+    try:
+        for asset in assets:
+            price = Decimal(str(asset.get('price', 0)))
+            quantity = Decimal(str(asset.get('quantity', 0)))
+
+            if price <= 0 or quantity <= 0:
+                continue  
+
+            value = price * quantity
+            asset_values[asset['symbol']] = value
+            total_value += value
+    except (InvalidOperation, TypeError, KeyError):
+        return Response({"error": "Invalid asset format or numeric value."}, status=400)
+
+    if total_value == 0:
+        return Response({"error": "Total portfolio value cannot be zero."}, status=400)
+
+    distribution = {
+        symbol: float((value / total_value).quantize(Decimal('0.000001')))
+        for symbol, value in asset_values.items()
+    }
+
+    diff = 1.0 - sum(distribution.values())
+    if abs(diff) > 1e-6:
+        last_key = list(distribution.keys())[-1]
+        distribution[last_key] += diff
+
+    portfolio = Portfolio.objects.create(
+        user=user,
+        name=name,
+        description=description,
+        assets=assets,
+        initial_distribution=distribution,
+        current_distribution=distribution,  
+        initial_balance=total_value,
+        current_balance=total_value
+    )
+
+    return Response({
+        "id": portfolio.id,
+        "name": portfolio.name,
+        "description": portfolio.description,
+        "initial_balance": float(portfolio.initial_balance),
+        "current_balance": float(portfolio.current_balance),
+        "initial_distribution": portfolio.initial_distribution,
+        "current_distribution": portfolio.current_distribution,
+        "assets": portfolio.assets,
+        "created_at": portfolio.created_at
+    }, status=201)
+
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_user_portfolios(request):
+    user = request.user
+    portfolios = Portfolio.objects.filter(user=user)
+
+    data = []
+    for p in portfolios:
+        data.append({
+            "id": p.id,
+            "name": p.name,
+            "description": p.description,
+            "initial_balance": float(p.initial_balance),
+            "current_balance": float(p.current_balance),
+            "assets": p.assets,
+            "initial_distribution": p.initial_distribution,
+            "current_distribution": p.current_distribution,
+            "creation_date": p.created_at.date()
+        })
+
+    return Response(data, status=200)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_portfolio(request):
+    user = request.user
+    portfolio_id = request.GET.get('id')
+
+    if not portfolio_id:
+        return JsonResponse({'error': 'Portfolio ID not provided.'}, status=400)
+
+    try:
+        portfolio = Portfolio.objects.filter(user=user, id=portfolio_id).first()
+        if not portfolio:
+            return JsonResponse({'error': 'Portfolio not found.'}, status=404)
+
+        portfolio_data = {
+            "id": portfolio.id,
+            "name": portfolio.name,
+            "description": portfolio.description,
+            "initial_balance": float(portfolio.initial_balance),
+            "current_balance": float(portfolio.current_balance),
+            "assets": portfolio.assets,
+            "initial_distribution": portfolio.initial_distribution,
+            "current_distribution": portfolio.current_distribution,
+            "creation_date": portfolio.created_at.date()
+        }
+
+        return JsonResponse({'portfolio': portfolio_data}, status=200)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def get_and_save_portfolio_pnl(request):
+    user = request.user
+    portfolio_id = request.data.get('id')
+    
+    if not portfolio_id:
+        return JsonResponse({'error': 'Portfolio ID not provided.'}, status=400)
+    
+    try:
+        portfolio = Portfolio.objects.filter(user=user, id=portfolio_id).first()
+        if not portfolio:
+            return JsonResponse({'error': 'Portfolio not found.'}, status=404)
+        
+        assets = portfolio.assets
+        if not assets:
+            return JsonResponse({'error': 'Portfolio has no assets.'}, status=400)
+        
+        symbols = [asset['symbol'] for asset in assets]
+        
+        symbols_data = MarketData.objects.filter(symbol__in=symbols).order_by('date')
+        
+        if not symbols_data.exists():
+            return JsonResponse({'error': 'No market data found for these symbols.'}, status=404)
+        
+        df = pd.DataFrame(list(symbols_data.values('symbol', 'date', 'close', 'open', 'high', 'low', 'volume')))
+        df['date'] = pd.to_datetime(df['date'])
+        
+        latest_prices = df.loc[df.groupby('symbol')['date'].idxmax()]
+        latest_prices_dict = dict(zip(latest_prices['symbol'], latest_prices['close']))
+        
+        one_week_ago = pd.Timestamp.now() - timedelta(weeks=1)
+        week_ago_data = df[df['date'] >= one_week_ago]
+        week_ago_prices = week_ago_data.loc[week_ago_data.groupby('symbol')['date'].idxmin()]
+        week_ago_prices_dict = dict(zip(week_ago_prices['symbol'], week_ago_prices['close']))
+        
+        current_balance = float(portfolio.current_balance) if portfolio.current_balance else float(portfolio.initial_balance)
+        current_distribution = portfolio.current_distribution or {}
+        initial_balance = float(portfolio.initial_balance)
+        initial_distribution = portfolio.initial_distribution or {}
+        
+        pnl_data = []
+        total_current_value = Decimal('0')
+        total_initial_value = Decimal('0')
+        
+        assets_map = {asset['symbol']: asset for asset in assets}
+        
+        for symbol in current_distribution.keys():
+            initial_weight = float(initial_distribution.get(symbol, 0))
+            
+            if symbol not in assets_map:
+                continue
+            
+            quantity = float(assets_map[symbol].get('quantity', 0))
+            
+            if quantity <= 0:
+                continue
+            
+            current_price = float(latest_prices_dict.get(symbol, 0))
+            week_ago_price = float(week_ago_prices_dict.get(symbol, current_price))
+            
+            if current_price <= 0:
+                continue
+            
+            initial_asset_value = initial_balance * initial_weight
+            
+            average_price = initial_asset_value / quantity if quantity > 0 else 0
+            
+            current_asset_value = quantity * current_price
+        
+            
+            pnl_value = current_asset_value - initial_asset_value
+            
+            pnl_percent = ((current_asset_value - initial_asset_value) / initial_asset_value * 100) if initial_asset_value > 0 else 0
+            
+            week_change = ((current_price - week_ago_price) / week_ago_price * 100) if week_ago_price > 0 else 0
+            
+            total_current_value += Decimal(str(current_asset_value))
+            total_initial_value += Decimal(str(initial_asset_value))
+            
+            pnl_data_temp = {
+                'symbol': symbol,
+                'quantity': quantity,
+                'average_price': average_price,
+                'current_price': current_price,
+                'week_ago_price': week_ago_price,
+                'initial_value': initial_asset_value,
+                'current_value': current_asset_value,
+                'pnl_value': pnl_value,
+                'pnl_percent': pnl_percent,
+                'week_change_percent': week_change,
+                'initial_weight': initial_weight * 100,
+            }
+            pnl_data.append(pnl_data_temp)
+        
+        total_current_value = float(total_current_value)
+        total_initial_value = float(total_initial_value)
+        
+        for item in pnl_data:
+            current_weight = (item['current_value'] / total_current_value * 100) if total_current_value > 0 else 0
+            item['current_weight'] = round(current_weight, 2)
+        
+        for item in pnl_data:
+            item['quantity'] = round(item['quantity'], 2)
+            item['average_price'] = round(item['average_price'], 2)
+            item['current_price'] = round(item['current_price'], 2)
+            item['week_ago_price'] = round(item['week_ago_price'], 2)
+            item['initial_value'] = round(item['initial_value'], 2)
+            item['current_value'] = round(item['current_value'], 2)
+            item['pnl_value'] = round(item['pnl_value'], 2)
+            item['pnl_percent'] = round(item['pnl_percent'], 2)
+            item['week_change_percent'] = round(item['week_change_percent'], 2)
+            item['initial_weight'] = round(item['initial_weight'], 2)
+        total_pnl_value = total_current_value - total_initial_value
+        total_pnl_percent = ((total_current_value - total_initial_value) / total_initial_value * 100) if total_initial_value > 0 else 0
+        
+        portfolio.current_balance = Decimal(str(total_current_value))
+        
+        new_current_distribution = {}
+        for item in pnl_data:
+            new_current_distribution[item['symbol']] = item['current_weight'] / 100
+        
+        portfolio.current_distribution = new_current_distribution
+        portfolio.save()
+        
+        total_pnl_value = total_current_value - total_initial_value
+        total_pnl_percent = ((total_current_value - total_initial_value) / total_initial_value * 100) if total_initial_value > 0 else 0
+        
+        return JsonResponse({
+            'pnl_data': pnl_data,
+            'full_data': {
+                'initial_balance': round(total_initial_value, 2),
+                'current_balance': round(total_current_value, 2),
+                'total_pnl_value': round(total_pnl_value, 2),
+                'total_pnl_percent': round(total_pnl_percent, 2),
+            }
+        }, status=200)
+    
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def delete_portfolio(request):
+    user = request.user
+    portfolio_id = request.data.get('id')
+    try:
+        portfolio = Portfolio.objects.filter(user=user,id=portfolio_id)
+        if not portfolio.exists():
+            return JsonResponse({'error': 'Portfolio not found.'}, status=404)
+
+        portfolio.delete()
+        return JsonResponse({'message': 'Portfolio deleted successfully.'}, status=200)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def delete_asset_from_portfolio(request):
+    user = request.user
+    portfolio_id = request.data.get('portfolio_id')
+    symbol = request.data.get('symbol')
+
+    try:
+        portfolio = Portfolio.objects.filter(user=user, id=portfolio_id).first()
+        if not portfolio:
+            return Response({'error': 'Portfolio not found.'}, status=404)
+
+        assets = [a for a in portfolio.assets if a['symbol'] != symbol]
+
+        total_value = Decimal('0')
+        current_distribution = {}
+        for asset in assets:
+            try:
+                price = Decimal(str(asset['price']))
+                quantity = Decimal(str(asset['quantity']))
+                value = price * quantity
+                current_distribution[asset['symbol']] = value
+                total_value += value
+            except (InvalidOperation, KeyError, TypeError):
+                continue  
+
+        if total_value > 0:
+            current_distribution = {k: float((v / total_value).quantize(Decimal('0.000001'))) for k, v in current_distribution.items()}
+            diff = 1.0 - sum(current_distribution.values())
+            if abs(diff) > 1e-6 and current_distribution:
+                last_key = list(current_distribution.keys())[-1]
+                current_distribution[last_key] += diff
+        else:
+            current_distribution = {}
+
+        portfolio.assets = assets
+        portfolio.current_distribution = current_distribution
+        portfolio.current_balance = float(total_value)
+        portfolio.save()
+
+        return Response({'message': 'Asset removed from portfolio successfully.'}, status=200)
+
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def add_asset_to_portfolio(request):
+    user = request.user
+    portfolio_id = request.data.get('portfolio_id')
+    new_asset = request.data.get('asset')  
+
+    try:
+        portfolio = Portfolio.objects.filter(user=user, id=portfolio_id).first()
+        if not portfolio:
+            return Response({'error': 'Portfolio not found.'}, status=404)
+
+        assets = portfolio.assets
+
+        if any(a['symbol'] == new_asset['symbol'] for a in assets):
+            return Response({'error': 'Asset already exists in the portfolio.'}, status=400)
+
+        assets.append(new_asset)
+
+        total_value = Decimal('0')
+        current_distribution = {}
+        for asset in assets:
+            try:
+                price = Decimal(str(asset['price']))
+                quantity = Decimal(str(asset['quantity']))
+                value = price * quantity
+                current_distribution[asset['symbol']] = value
+                total_value += value
+            except (InvalidOperation, KeyError, TypeError):
+                continue
+
+        if total_value > 0:
+            current_distribution = {k: float((v / total_value).quantize(Decimal('0.000001'))) for k, v in current_distribution.items()}
+            diff = 1.0 - sum(current_distribution.values())
+            if abs(diff) > 1e-6 and current_distribution:
+                last_key = list(current_distribution.keys())[-1]
+                current_distribution[last_key] += diff
+        else:
+            current_distribution = {}
+
+        portfolio.assets = assets
+        portfolio.current_distribution = current_distribution
+        portfolio.current_balance = float(total_value)
+        portfolio.save()
+
+        return Response({'message': 'Asset added to portfolio successfully.'}, status=200)
+
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_portfolio_risk(request):
+    user = request.user
+    portfolio_id = request.GET.get('id')
+
+    try:
+        portfolio = Portfolio.objects.filter(user=user, id=portfolio_id).first()
+        if not portfolio:
+            return Response({'error': 'Portfolio not found.'}, status=404)
+
+        assets = portfolio.assets
+        symbols = [asset['symbol'] for asset in assets]
+
+        distribution_dict = portfolio.current_distribution or {}
+        distribution = [distribution_dict.get(symbol, 0.0) for symbol in symbols]
+
+        symbols_data = MarketData.objects.filter(symbol__in=symbols).order_by('date')
+        symbols_data = pd.DataFrame(list(symbols_data.values('symbol', 'date', 'close', 'high', 'low', 'open', 'volume')))
+        if symbols_data.empty:
+            return Response({'error': 'No market data found for these symbols.'}, status=404)
+
+        three_years_ago = pd.Timestamp.now() - pd.DateOffset(years=3)
+        symbols_data['date'] = pd.to_datetime(symbols_data['date'], errors='coerce')
+        symbols_data = symbols_data[symbols_data['date'] >= three_years_ago]
+
+        latest_prices = symbols_data.sort_values('date').drop_duplicates(subset=['symbol'], keep='last')
+        price_dict = latest_prices.set_index('symbol')['close'].apply(float).to_dict()
+
+        portfolio_risk = PortfolioRisk(symbols=symbols, distribution=distribution, price_dict=price_dict, df=symbols_data)
+        results = portfolio_risk.full_process()
+
+        return Response({
+            'symbols': symbols,
+            'measures': results,
+            'status': 200
+        })
+
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_portfolio_assets_predictions(request):
+
+    user = request.user
+    portfolio_id = request.GET.get('id')
+    try:
+        portfolio = Portfolio.objects.filter(user=user,id=portfolio_id)
+        if not portfolio.exists():
+            return JsonResponse({'error': 'Portfolio not found.'}, status=404)
+
+        df = pd.DataFrame(list(portfolio.values('assets')))
+
+        assets = df.iloc[0]['assets']
+        symbols = [asset['symbol'] for asset in assets]
+        print(symbols)
+
+        predictions = Prediction.objects.filter(symbol__in=symbols).order_by('date')
+
+        predictions_data = pd.DataFrame(list(predictions.values('date', 'results', 'symbol', 'prediction')))
+        predictions_data = predictions_data.drop_duplicates(subset=['symbol'], keep='last')
+
+        prediction_data = json.loads(predictions_data.to_json(orient='records'))
+        return JsonResponse({'predictions': prediction_data}, status=200)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_all_symbols(request):
+    if request.method == 'GET':
+        try:
+            symbols = MarketData.objects.order_by('symbol').values_list('symbol', flat=True).distinct()
+            symbols = [symb for symb in symbols if symb in ALLOWED_SYMBOLS]
+            return JsonResponse({'symbols': list(symbols)}, status=200)
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+        
+    return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_asset_historical_data(request, symb):
     if request.method == 'GET':
         symbol = request.GET.get('symbol', symb)
-        data = request.GET.get('data')
         try:
             market_data = MarketData.objects.filter(symbol=symbol).order_by('date')
             if not market_data.exists():
                 return JsonResponse({'error': 'No market data found for the given symbol.'}, status=404)
 
             df = pd.DataFrame(list(market_data.values('date', 'close')))
-            df.set_index('date', inplace=True)
 
-            risk_free_rate = float(data['risk_free_rate']) 
-
-            calc = RiskMeasurements(df)
-            sharpe_ratio = calc.sharpe_ratio(risk_free_rate=risk_free_rate)
-            return JsonResponse({'symbol': symbol, 'sharpe_ratio': sharpe_ratio}, status=200)
-
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-        
-    return JsonResponse({'error': 'Invalid request method.'}, status=405)
-
-def get_volatility(request, symb):
-    if request.method == 'GET':
-        symbol = request.GET.get('symbol', symb)
-        try:
-            market_data = MarketData.objects.filter(symbol=symbol).order_by('date')
-            if not market_data.exists():
-                return JsonResponse({'error': 'No market data found for the given symbol.'}, status=404)
-
-            df = pd.DataFrame(list(market_data.values('date', 'close')))
-            df.set_index('date', inplace=True)
-
-            calc = RiskMeasurements(df)
-            volatility = calc.historical_volatility()
-            return JsonResponse({'symbol': symbol, 'volatility': volatility}, status=200)
-
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-        
-    return JsonResponse({'error': 'Invalid request method.'}, status=405)
-
-def get_var(request, symb):
-    if request.method == 'GET':
-        symbol = request.GET.get('symbol', symb)
-        data = request.GET.get('data')
-        try:
-            market_data = MarketData.objects.filter(symbol=symbol).order_by('date')
-            if not market_data.exists():
-                return JsonResponse({'error': 'No market data found for the given symbol.'}, status=404)
-
-            df = pd.DataFrame(list(market_data.values('date', 'close')))
-            df.set_index('date', inplace=True)
-            z = float(data['z']) 
-            confidence_level = float(data['confidence_level'])
-            calc = RiskMeasurements(df)
-            var = calc.parametric_var(z=z, confidence_level=confidence_level)
-            return JsonResponse({'symbol': symbol, 'value_at_risk': var}, status=200)
-
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-        
-    return JsonResponse({'error': 'Invalid request method.'}, status=405)
-
-def get_kurtosis(request, symb):
-    if request.method == 'GET':
-        symbol = request.GET.get('symbol', symb)
-        try:
-            market_data = MarketData.objects.filter(symbol=symbol).order_by('date')
-            if not market_data.exists():
-                return JsonResponse({'error': 'No market data found for the given symbol.'}, status=404)
-
-            df = pd.DataFrame(list(market_data.values('date', 'close')))
-            df.set_index('date', inplace=True)
-
-            calc = RiskMeasurements(df)
-            kurtosis = calc.kurtosis()
-            return JsonResponse({'symbol': symbol, 'kurtosis': kurtosis}, status=200)
+            historical_data = df.to_dict(orient='records')
+            return JsonResponse({'symbol': symbol, 'historical_data': historical_data}, status=200)
 
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
@@ -95,30 +526,15 @@ def get_kurtosis(request, symb):
     return JsonResponse({'error': 'Invalid request method.'}, status=405)
 
 
-def get_max_drawdown(request, symb):
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_asset_risk_data(request, symb):
     if request.method == 'GET':
         symbol = request.GET.get('symbol', symb)
         try:
-            market_data = MarketData.objects.filter(symbol=symbol).order_by('date')
-            if not market_data.exists():
-                return JsonResponse({'error': 'No market data found for the given symbol.'}, status=404)
+            if not symbol or symbol not in ALLOWED_SYMBOLS:
+                return JsonResponse({'error': 'Invalid or unsupported symbol.'}, status=400)
 
-            df = pd.DataFrame(list(market_data.values('date', 'close')))
-            df.set_index('date', inplace=True)
-
-            calc = RiskMeasurements(df)
-            max_drawdown = calc.max_drawdown()
-            return JsonResponse({'symbol': symbol, 'max_drawdown': max_drawdown}, status=200)
-
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-        
-    return JsonResponse({'error': 'Invalid request method.'}, status=405)
-
-def get_full_data(request, symb):
-    if request.method == 'GET':
-        symbol = request.GET.get('symbol', symb)
-        try:
             market_data = MarketData.objects.filter(symbol=symbol).order_by('date')
             if not market_data.exists():
                 return JsonResponse({'error': 'No market data found for the given symbol.'}, status=404)
@@ -138,92 +554,41 @@ def get_full_data(request, symb):
 
     return JsonResponse({'error': 'Invalid request method.'}, status=405)
 
-
-def get_chatbot_analysis(request, symb):
-    if request.method == 'GET':
-        symbol = request.GET.get('symbol', symb)
-        prompt = request.GET.get('prompt', """
-            Você é um assistente financeiro que analisa dados de mercado e retorna insights resumidos e objetivos.
-            Você irá receber dados de mercado e medidas estatísticas, como volatilidade, risco, outros indicadores financeiros e previsões.
-            Você deve gerar uma análise detalhada e objetiva.
-            
-            Por favor, gere um relatório detalhado com:
-            - Principais riscos
-            - Recomendações
-            - Notícias relacionadas ao ativo
-            - Interpretação dos dados""")
-        
-        try:
-            analysis = get_chat_analysis(prompt=prompt, symbol=symbol)
-            return JsonResponse({'symbol': symbol, 'analysis': analysis}, status=200)
-
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-        
-    return JsonResponse({'error': 'Invalid request method.'}, status=405)
-
-
-def get_all_symbols(request):
-    if request.method == 'GET':
-        try:
-            symbols = MarketData.objects.order_by('symbol').values_list('symbol', flat=True).distinct()
-            return JsonResponse({'symbols': list(symbols)}, status=200)
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-        
-    return JsonResponse({'error': 'Invalid request method.'}, status=405)
-
-
-def get_historical_data(request, symb):
-    if request.method == 'GET':
-        symbol = request.GET.get('symbol', symb)
-        try:
-            market_data = MarketData.objects.filter(symbol=symbol).order_by('date')
-            if not market_data.exists():
-                return JsonResponse({'error': 'No market data found for the given symbol.'}, status=404)
-
-            df = pd.DataFrame(list(market_data.values('date', 'close')))
-
-            historical_data = df.to_dict(orient='records')
-            return JsonResponse({'symbol': symbol, 'historical_data': historical_data}, status=200)
-
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-        
-    return JsonResponse({'error': 'Invalid request method.'}, status=405)
-
-@csrf_exempt
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def get_optimized_portfolio(request):
-    if request.method == 'POST':
-        data = request.body
+    if request.method == 'GET':
+        data = request.GET
         try:
-            data = json.loads(data)
-            symbols = data.get('symbols',[])
-            optimizer = data.get('optimizer')
-            behaviour = data.get('behaviour')
-            min_return = data.get('min_return')
+            user = request.user
+            portfolio_id = data.get('portfolio_id')
+            min_return = float(data.get('min_return', 0.0006))
 
-            print(f'Received data: symbols={symbols}, optimizer={optimizer}, behaviour={behaviour}, min_return={min_return}')
+            portfolio = Portfolio.objects.filter(user=user,id=portfolio_id)
+            portfolio_symbols = portfolio[0].assets
 
+            symbols = [asset['symbol'] for asset in portfolio_symbols]
             symbols_data = MarketData.objects.filter(symbol__in=symbols).order_by('date')
+
             symbols_data = pd.DataFrame(list(symbols_data.values('symbol', 'date', 'close', 'high', 'low', 'open', 'volume')))
 
+            data_mk = process_markowitz_data(symbols_data, behaviour='balanced', min_return=min_return)
 
-            if(optimizer == 'markowitz'):
-                data = process_markowitz_data(symbols_data, behaviour, min_return)
-                optimization = PortfolioOptimizer(items=data['items'],items_val=data['items_val'], items_returns= data['items_returns'], items_pred= data['items_pred'],
-                                                  items_vol= data['items_vol'], min_return=data['min_return'], optimizer= data['optimizer'], behaviour= data['behaviour'])
-                results = optimization.optimize()
+            predictions_data = Prediction.objects.filter(symbol__in=symbols).order_by('date')
+            predictions_data = pd.DataFrame(list(predictions_data.values('date', 'results', 'symbol', 'prediction')))
+            predictions_data = predictions_data.drop_duplicates(subset=['symbol'], keep='last')
 
-            elif(optimizer in ['gnosse','gnosse2']):
-                predictions = Prediction.objects.filter(symbol__in=symbols).order_by('date')
-                predictions_data = pd.DataFrame(list(predictions.values('date', 'results', 'symbol','prediction')))
-                predictions_data = predictions_data.drop_duplicates(subset=['symbol'], keep='last')
-                data = process_gnosse_data(symbols_data, predictions_data, optimizer, behaviour)
+            data_gn = process_gnosse_data(symbols_data, predictions_data, behaviour='balanced')
 
-                optimization = PortfolioOptimizer(items=data['items'],items_val=data['items_val'], items_returns= data['items_returns'], items_pred= data['items_pred'],
-                                                  items_vol= data['items_vol'], min_return=data['min_return'], optimizer= data['optimizer'], behaviour= data['behaviour'])
-                results = optimization.optimize()
+            optimization_mk = PortfolioOptimizer(items=data_mk['items'],items_val=data_mk['items_val'], items_returns= data_mk['items_returns'], items_pred= data_mk['items_pred'],
+                                                    items_vol= data_mk['items_vol'], min_return=data_mk['min_return'], optimizer= data_mk['optimizer'])
+            results_mk = optimization_mk.optimize_portfolio()
+
+            optimization_gn = PortfolioOptimizer(items=data_gn['items'],items_val=data_gn['items_val'], items_returns= data_gn['items_returns'], items_pred= data_gn['items_pred'],
+                                                    items_vol= data_gn['items_vol'], min_return=data_gn['min_return'], optimizer= data_gn['optimizer'])
+            results_gn = optimization_gn.optimize_portfolio()
+
+            results = {"markowitz": results_mk, "gnosse": results_gn}
 
             return JsonResponse({'results': results}, status=200)
 
@@ -233,13 +598,19 @@ def get_optimized_portfolio(request):
         
     return JsonResponse({'error': 'Invalid request method.'}, status=405)
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def get_starter_portfolio(request):
     if request.method == 'GET':
         try:
             data = MarketData.objects.all().order_by('date')
             data = pd.DataFrame(list(data.values('symbol', 'date', 'close')))
 
-            processed_data = process_markowitz_data(data, behaviour='neutral', min_return=0.0003)
+            data = data[data['symbol'].isin(ALLOWED_SYMBOLS)]
+            data['date'] = pd.to_datetime(data['date'], errors='coerce')
+            data = data[data['date'] >= pd.Timestamp.now() - pd.DateOffset(years=4)]
+
+            processed_data = process_markowitz_data(data, behaviour='aggressive', min_return=0.0005)
 
             optimizer = PortfolioOptimizer(items=processed_data['items'], items_val=processed_data['items_val'],
                                            items_returns=processed_data['items_returns'], items_pred=processed_data['items_pred'],
@@ -251,54 +622,32 @@ def get_starter_portfolio(request):
             return JsonResponse({'symbols': to_json_results['items'], 'distribuition': to_json_results['optimized_weights']  , 'complete_result': to_json_results}, status=200)
 
         except Exception as e:
+            traceback.print_exc()
             return JsonResponse({'error': str(e)}, status=500)
         
     return JsonResponse({'error': 'Invalid request method.'}, status=405)
 
-@csrf_exempt
-def get_portfolio_full_analysis(request):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            symbols = data.get('symbols', [])
-            distribution = data.get('distribution', [])
 
-            distribution = [float(d) for d in distribution]
-
-            interval = 3 
-
-            symbols_data = MarketData.objects.filter(symbol__in=symbols).order_by('date').filter(date__gte=pd.Timestamp.now() - pd.DateOffset(years=interval))
-            symbols_data = pd.DataFrame(list(symbols_data.values('symbol', 'date', 'close', 'high', 'low', 'open', 'volume')))
-
-            symbols_prices = symbols_data.drop_duplicates(subset=['symbol'], keep='last').sort_values(by='symbol')
-            symbols_prices = symbols_prices.set_index('symbol')['close'].apply(float).to_dict()
-
-
-            portfolio_risk = PortfolioRisk(symbols=symbols, distribution=distribution, price_dict=symbols_prices, df=symbols_data)
-            results = portfolio_risk.full_process()
-
-            return JsonResponse({'symbols': symbols, 'measures': results, 'status': 200})
-
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-
-    return JsonResponse({'error': 'Method not allowed'}, status=405)
-
-def get_asset_predictions(request, symb):
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_asset_chatbot_analysis(request, symb):
     if request.method == 'GET':
         symbol = request.GET.get('symbol', symb)
         try:
-            predictions = Prediction.objects.filter(symbol=symbol).order_by('date')
-            if not predictions.exists():
-                return JsonResponse({'error': 'No predictions found for the given symbol.'}, status=404)
+            market_data = MarketData.objects.filter(symbol=symbol).order_by('date')
+            if not market_data.exists():
+                return JsonResponse({'error': 'No market data found for the given symbol.'}, status=404)
 
-            df = pd.DataFrame(list(predictions.values('date', 'results', 'symbol', 'prediction')))
-            df = df.drop_duplicates(subset=['symbol'], keep='last')
+            df = pd.DataFrame(list(market_data.values('date', 'close','high','low','open','volume')))
+            df.set_index('date', inplace=True)
 
-            prediction_data = json.loads(df.to_json(orient='records'))
-            return JsonResponse({'symbol': symbol, 'predictions': prediction_data}, status=200)
+            analysis = get_chat_analysis(symbol, df)
+
+            return JsonResponse({'symbol': symbol, 'chatbot_analysis': analysis}, status=200)
 
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
-        
+
     return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+

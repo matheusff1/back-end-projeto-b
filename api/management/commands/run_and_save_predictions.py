@@ -7,6 +7,7 @@ class Command(BaseCommand):
     def handle(self, *args, **kwargs):
         print("Iniciando o processo de previsões.")
         try:
-            predictions_process()
+            #predictions_process()
+            predictions_process_v2()
         except Exception as e:
             print(f"Ocorreu um erro ao executar o modelo de previsão: {e}")

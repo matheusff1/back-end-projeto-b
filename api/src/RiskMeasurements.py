@@ -290,6 +290,9 @@ class PortfolioRisk:
         portfolio_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix.values, weights)))
         return {
             'portfolio_volatility': portfolio_vol,
+            'portfolio_volatility_annualized': portfolio_vol * np.sqrt(252),
+            'portfolio_volatility_monthly': portfolio_vol * np.sqrt(21),
+            'portfolio_volatility_weekly': portfolio_vol * np.sqrt(5),
         }
 
     def portfolio_correlation(self):
@@ -316,6 +319,9 @@ class PortfolioRisk:
         return {
             'portfolio_value': total_value,
             'value_at_risk': -var,
+            'var_annualized': -var * np.sqrt(252),
+            'var_monthly': -var * np.sqrt(21),
+            'var_weekly': -var * np.sqrt(5),
             'confidence_level': '95%' 
         }
 

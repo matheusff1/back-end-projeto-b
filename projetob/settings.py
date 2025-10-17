@@ -31,7 +31,7 @@ SECRET_KEY = 'django-insecure-j44!w6=q1-6^g81zz_zm--x@v$3q4d)23(4%#0ykwws&kyjb=8
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -46,8 +46,16 @@ INSTALLED_APPS = [
     "django_extensions",
     'rest_framework',
     'corsheaders',
-    'api'
+    'api',
+    'authapp',
+    'rest_framework_simplejwt.token_blacklist',
 ]
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ),
+}
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
@@ -90,6 +98,9 @@ DATABASES = {
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+
+
+AUTH_USER_MODEL = 'authapp.User'
 
 
 # Password validation
