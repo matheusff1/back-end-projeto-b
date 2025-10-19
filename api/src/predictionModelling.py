@@ -424,7 +424,7 @@ class PredictionModelV2:
                 validation_data=(test_X, test_y),
                 epochs=self.epochs,
                 batch_size=self.batch_size,
-                verbose=self.verbose,
+                verbose=0,
                 callbacks=self.callbacks
             )
             

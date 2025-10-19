@@ -12,6 +12,10 @@ def run_predictions_command():
     print(f"[{datetime.now()}] Executando comando run_and_save_predictions...")
     call_command('run_and_save_predictions') 
 
+def run_update_portfolios_data():
+    print(f"[{datetime.now()}] Atualizando dados dos portfólios...")
+    call_command('update_portfolios_data')
+
 def start():
     scheduler = BackgroundScheduler(timezone=timezone('America/Sao_Paulo'))
 
@@ -23,8 +27,14 @@ def start():
 
     scheduler.add_job(
         run_predictions_command, 
-        trigger=CronTrigger(hour=19, minute=20),
+        trigger=CronTrigger(hour=20, minute=20),
         misfire_grace_time=60 
+    )
+
+    scheduler.add_job(
+        run_update_portfolios_data,
+        trigger=CronTrigger(hour=23, minute=30),
+        misfire_grace_time=60
     )
 
     print(f"[{datetime.now()}] Scheduler iniciado...")

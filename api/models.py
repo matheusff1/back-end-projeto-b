@@ -69,3 +69,24 @@ class Portfolio(models.Model):
 
     def __str__(self):
         return f"{self.name} - {self.user.email}"
+    
+
+class PortfolioTracking(models.Model):
+    portfolio = models.ForeignKey(
+        Portfolio,
+        on_delete=models.CASCADE,
+        related_name='tracking_data'
+    )
+    date = models.DateTimeField()
+    balance = models.DecimalField(max_digits=20, decimal_places=2)
+    distribution = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = 'portfolio_tracking'
+        unique_together = ('portfolio', 'date')
+        ordering = ['date']
+        verbose_name = 'Portfolio Tracking'
+        verbose_name_plural = 'Portfolio Tracking Records'
+
+    def __str__(self):
+        return f"{self.portfolio.name} - {self.date} - PnL: {self.pnl}"

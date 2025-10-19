@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+from datetime import timedelta
 
 
 
@@ -45,6 +46,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     "django_extensions",
     'rest_framework',
+    'rest_framework_api_key',
     'corsheaders',
     'api',
     'authapp',
@@ -144,6 +146,18 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-TWELVE_DATA_API_KEY = 'sua_chave_twelvedata_aqui'  # Substitua pela sua chave da Twelve Data
+TWELVE_DATA_API_KEY = 'sua_chave_twelvedata_aqui'  
 
 
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),   
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),      
+    "ROTATE_REFRESH_TOKENS": False,           
+    "BLACKLIST_AFTER_ROTATION": True,                 
+
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "AUTH_HEADER_TYPES": ("Bearer",),               
+
+    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+}

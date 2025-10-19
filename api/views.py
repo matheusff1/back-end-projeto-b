@@ -12,7 +12,7 @@ import traceback
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Portfolio
+from .models import Portfolio, PortfolioTracking
 from decimal import Decimal, InvalidOperation
 
 
@@ -94,6 +94,13 @@ def create_portfolio(request):
         current_distribution=distribution,  
         initial_balance=total_value,
         current_balance=total_value
+    )
+
+    PortfolioTracking.objects.create(
+        portfolio=portfolio,
+        date=pd.Timestamp.now(),
+        balance=total_value,
+        distribution=distribution
     )
 
     return Response({
@@ -292,7 +299,8 @@ def get_and_save_portfolio_pnl(request):
         
         total_pnl_value = total_current_value - total_initial_value
         total_pnl_percent = ((total_current_value - total_initial_value) / total_initial_value * 100) if total_initial_value > 0 else 0
-        
+
+
         return JsonResponse({
             'pnl_data': pnl_data,
             'full_data': {
@@ -300,6 +308,127 @@ def get_and_save_portfolio_pnl(request):
                 'current_balance': round(total_current_value, 2),
                 'total_pnl_value': round(total_pnl_value, 2),
                 'total_pnl_percent': round(total_pnl_percent, 2),
+            }
+        }, status=200)
+    
+    
+    
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def get_portfolio_pnl(request):
+    user = request.user
+    portfolio_id = request.data.get('id')
+    
+    if not portfolio_id:
+        return JsonResponse({'error': 'Portfolio ID not provided.'}, status=400)
+    
+    try:
+        portfolio = Portfolio.objects.filter(user=user, id=portfolio_id).first()
+        if not portfolio:
+            return JsonResponse({'error': 'Portfolio not found.'}, status=404)
+        
+        tracking_records = PortfolioTracking.objects.filter(
+            portfolio=portfolio
+        ).order_by('date')
+        
+        if not tracking_records.exists():
+            return JsonResponse({'error': 'No tracking data found for this portfolio.'}, status=404)
+        
+        tracking_df = pd.DataFrame(list(tracking_records.values('date', 'balance', 'distribution')))
+        
+        initial_record = tracking_records.first()
+        current_record = tracking_records.last()
+        
+        initial_balance = float(initial_record.balance)
+        current_balance = float(current_record.balance)
+        initial_distribution = initial_record.distribution or {}
+        current_distribution = current_record.distribution or {}
+        
+        all_symbols = set(list(initial_distribution.keys()) + list(current_distribution.keys()))
+        
+        symbols_data = MarketData.objects.filter(symbol__in=all_symbols).order_by('date')
+        
+        if not symbols_data.exists():
+            return JsonResponse({'error': 'No market data found for these symbols.'}, status=404)
+        
+        df = pd.DataFrame(list(symbols_data.values('symbol', 'date', 'close')))
+        df['date'] = pd.to_datetime(df['date'])
+        
+        latest_prices = df.loc[df.groupby('symbol')['date'].idxmax()]
+        latest_prices_dict = dict(zip(latest_prices['symbol'], latest_prices['close']))
+        
+        one_week_ago = pd.Timestamp.now() - timedelta(weeks=1)
+        week_ago_data = df[df['date'] >= one_week_ago]
+        week_ago_prices = week_ago_data.loc[week_ago_data.groupby('symbol')['date'].idxmin()]
+        week_ago_prices_dict = dict(zip(week_ago_prices['symbol'], week_ago_prices['close']))
+        
+        assets = portfolio.assets
+        assets_map = {asset['symbol']: asset for asset in assets}
+        
+        pnl_data = []
+        
+        for symbol in all_symbols:
+            initial_weight = float(initial_distribution.get(symbol, 0))
+            current_weight = float(current_distribution.get(symbol, 0))
+            
+            initial_asset_value = initial_balance * initial_weight
+            current_asset_value = current_balance * current_weight
+            
+            current_price = float(latest_prices_dict.get(symbol, 0))
+            week_ago_price = float(week_ago_prices_dict.get(symbol, current_price))
+            
+            if current_price <= 0:
+                continue
+            
+            if symbol in assets_map:
+                quantity = float(assets_map[symbol].get('quantity', 0))
+            else:
+                quantity = current_asset_value / current_price if current_price > 0 else 0
+            
+            if quantity <= 0:
+                continue
+            
+            average_price = initial_asset_value / quantity if quantity > 0 else 0
+            
+            pnl_value = current_asset_value - initial_asset_value
+            pnl_percent = ((current_asset_value - initial_asset_value) / initial_asset_value * 100) if initial_asset_value > 0 else 0
+            
+            week_change = ((current_price - week_ago_price) / week_ago_price * 100) if week_ago_price > 0 else 0
+            
+            pnl_data.append({
+                'symbol': symbol,
+                'quantity': round(quantity, 2),
+                'average_price': round(average_price, 2),
+                'current_price': round(current_price, 2),
+                'week_ago_price': round(week_ago_price, 2),
+                'initial_value': round(initial_asset_value, 2),
+                'current_value': round(current_asset_value, 2),
+                'pnl_value': round(pnl_value, 2),
+                'pnl_percent': round(pnl_percent, 2),
+                'week_change_percent': round(week_change, 2),
+                'initial_weight': round(initial_weight * 100, 2),
+                'current_weight': round(current_weight * 100, 2),
+            })
+        
+        total_pnl_value = current_balance - initial_balance
+        total_pnl_percent = ((current_balance - initial_balance) / initial_balance * 100) if initial_balance > 0 else 0
+        portfolio_balance_vol = np.log(tracking_df['balance'] / tracking_df['balance'].shift(1)).std() * np.sqrt(252)
+
+
+        return JsonResponse({
+            'pnl_data': pnl_data,
+            'pnl_general': {
+                'initial_balance': round(initial_balance, 2),
+                'current_balance': round(current_balance, 2),
+                'total_pnl_value': round(total_pnl_value, 2),
+                'total_pnl_percent': round(total_pnl_percent, 2),
+                'initial_date': initial_record.date.isoformat(),
+                'current_date': current_record.date.isoformat(),
+                'balance_volatility': round(portfolio_balance_vol, 4)
             }
         }, status=200)
     
@@ -364,6 +493,13 @@ def delete_asset_from_portfolio(request):
         portfolio.current_balance = float(total_value)
         portfolio.save()
 
+        PortfolioTracking.objects.create(
+            portfolio=portfolio,
+            date=pd.Timestamp.now(),
+            balance=portfolio.current_balance,
+            distribution=portfolio.current_distribution
+        )
+
         return Response({'message': 'Asset removed from portfolio successfully.'}, status=200)
 
     except Exception as e:
@@ -414,6 +550,13 @@ def add_asset_to_portfolio(request):
         portfolio.current_distribution = current_distribution
         portfolio.current_balance = float(total_value)
         portfolio.save()
+
+        PortfolioTracking.objects.create(
+            portfolio=portfolio,
+            date=pd.Timestamp.now(),
+            balance=portfolio.current_balance,
+            distribution=portfolio.current_distribution
+        )
 
         return Response({'message': 'Asset added to portfolio successfully.'}, status=200)
 
@@ -477,15 +620,15 @@ def get_portfolio_assets_predictions(request):
 
         assets = df.iloc[0]['assets']
         symbols = [asset['symbol'] for asset in assets]
-        print(symbols)
 
         predictions = Prediction.objects.filter(symbol__in=symbols).order_by('date')
 
-        predictions_data = pd.DataFrame(list(predictions.values('date', 'results', 'symbol', 'prediction')))
+        predictions_data = pd.DataFrame(list(predictions.values('date', 'symbol', 'prediction')))
         predictions_data = predictions_data.drop_duplicates(subset=['symbol'], keep='last')
+        predictions_data['date'] = predictions_data['date'].astype(str)
 
-        prediction_data = json.loads(predictions_data.to_json(orient='records'))
-        return JsonResponse({'predictions': prediction_data}, status=200)
+        predictions_data = json.loads(predictions_data.to_json(orient='records'))
+        return JsonResponse({'predictions': predictions_data}, status=200)
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
@@ -515,7 +658,7 @@ def get_asset_historical_data(request, symb):
             if not market_data.exists():
                 return JsonResponse({'error': 'No market data found for the given symbol.'}, status=404)
 
-            df = pd.DataFrame(list(market_data.values('date', 'close')))
+            df = pd.DataFrame(list(market_data.values('date', 'close','open','high','low','volume')))
 
             historical_data = df.to_dict(orient='records')
             return JsonResponse({'symbol': symbol, 'historical_data': historical_data}, status=200)
@@ -578,15 +721,15 @@ def get_optimized_portfolio(request):
             predictions_data = pd.DataFrame(list(predictions_data.values('date', 'results', 'symbol', 'prediction')))
             predictions_data = predictions_data.drop_duplicates(subset=['symbol'], keep='last')
 
-            data_gn = process_gnosse_data(symbols_data, predictions_data, behaviour='balanced')
+            data_gn = process_gnosse_data(symbols_data, predictions_data, behaviour='aggressive')
 
             optimization_mk = PortfolioOptimizer(items=data_mk['items'],items_val=data_mk['items_val'], items_returns= data_mk['items_returns'], items_pred= data_mk['items_pred'],
                                                     items_vol= data_mk['items_vol'], min_return=data_mk['min_return'], optimizer= data_mk['optimizer'])
-            results_mk = optimization_mk.optimize_portfolio()
+            results_mk = optimization_mk.optimize()
 
             optimization_gn = PortfolioOptimizer(items=data_gn['items'],items_val=data_gn['items_val'], items_returns= data_gn['items_returns'], items_pred= data_gn['items_pred'],
                                                     items_vol= data_gn['items_vol'], min_return=data_gn['min_return'], optimizer= data_gn['optimizer'])
-            results_gn = optimization_gn.optimize_portfolio()
+            results_gn = optimization_gn.optimize()
 
             results = {"markowitz": results_mk, "gnosse": results_gn}
 
@@ -610,7 +753,7 @@ def get_starter_portfolio(request):
             data['date'] = pd.to_datetime(data['date'], errors='coerce')
             data = data[data['date'] >= pd.Timestamp.now() - pd.DateOffset(years=4)]
 
-            processed_data = process_markowitz_data(data, behaviour='aggressive', min_return=0.0005)
+            processed_data = process_markowitz_data(data, behaviour='neutral', min_return=0.0005)
 
             optimizer = PortfolioOptimizer(items=processed_data['items'], items_val=processed_data['items_val'],
                                            items_returns=processed_data['items_returns'], items_pred=processed_data['items_pred'],
@@ -651,3 +794,31 @@ def get_asset_chatbot_analysis(request, symb):
     return JsonResponse({'error': 'Invalid request method.'}, status=405)
 
 
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_assets_last_data(request):
+    if request.method == 'GET':
+        try:
+            symbols = MarketData.objects.order_by('symbol').values_list('symbol', flat=True).distinct()
+            symbols = [symb for symb in symbols if symb in ALLOWED_SYMBOLS]
+
+            last_data = {}
+            for symbol in symbols:
+                asset_data = MarketData.objects.filter(symbol=symbol).order_by('-date').first()
+                if asset_data:
+                    last_data[symbol] = {
+                        'date': asset_data.date,
+                        'close': float(asset_data.close),
+                        'open': float(asset_data.open),
+                        'high': float(asset_data.high),
+                        'low': float(asset_data.low),
+                        'volume': int(asset_data.volume)
+                    }
+
+            return JsonResponse({'last_data': last_data}, status=200)
+
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+        
+    return JsonResponse({'error': 'Invalid request method.'}, status=405)

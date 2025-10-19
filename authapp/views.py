@@ -6,12 +6,14 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
+from rest_framework_api_key.permissions import HasAPIKey
+
 
 User = get_user_model()
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([HasAPIKey])
 def register_user(request):
     data = request.data
 
@@ -46,7 +48,7 @@ def register_user(request):
 
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([HasAPIKey])
 def login_user(request):
     email = request.data.get('email')
     password = request.data.get('password')
@@ -74,7 +76,7 @@ def login_user(request):
     })
 
 @api_view(['POST'])
-@permission_classes([AllowAny])
+@permission_classes([HasAPIKey])
 def refresh_token(request):
     refresh_token = request.data.get('refresh')
     if not refresh_token:
@@ -90,6 +92,7 @@ def refresh_token(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+@permission_classes([HasAPIKey])
 def logout_user(request):
     refresh_token = request.data.get('refresh')
 
