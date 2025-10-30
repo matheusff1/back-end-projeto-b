@@ -1,6 +1,49 @@
 # Gnose A - API de Análise de Portfólio e Predições
 
-Sistema backend Django para análise de mercado financeiro, gerenciamento de portfólios de investimentos e predições de ativos utilizando modelos LSTM.
+Sistema backend Django para análise de mercado financeiro, gerenciamento de portfólios de investimentos e predição API Endpoints
+
+###  Sistema de Autenticação
+
+A API utiliza dois mecanismos de segurança:
+
+#### 1. API Key (Para endpoints de autenticação)
+- Necessária para: `/auth/register/`, `/auth/login/`, `/auth/refresh/`
+- Adicione no **header** de todas as requisições de autenticação:
+```
+X-Api-Key: sua-api-key-aqui
+```
+
+#### 2. JWT Token (Para demais endpoints)
+- Necessário para todos os endpoints `/api/*`
+- Após fazer login, você recebe dois tokens:
+  - **Access Token**: Válido por **30 minutos** - use para requisições
+  - **Refresh Token**: Válido por **7 dias** - use para renovar o access token
+
+**Como usar o Access Token:**
+Adicione no **header** de todas as requisições protegidas:
+```
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
+```
+
+**Fluxo de autenticação:**
+1. Faça login com `/auth/login/` (com API Key)
+2. Guarde o `access` e `refresh` token recebidos
+3. Use o `access` token nas requisições (válido 30 min)
+4. Quando expirar, use `/auth/refresh/` para renovar (com API Key + refresh token)
+5. Se o refresh token expirar (7 dias), faça login novamente
+
+---
+
+### Autenticação
+
+| Método | Endpoint | Descrição | Requer API Key | Requer Token |
+|--------|----------|-----------|----------------|--------------|
+| POST | `/auth/register/` | Registra novo usuário | ✅ | ❌ |
+| POST | `/auth/login/` | Login e obtenção de tokens JWT | ✅ | ❌ |
+| POST | `/auth/logout/` | Logout do usuário | ✅ | ✅ |
+| POST | `/auth/refresh/` | Renova access token | ✅ | ❌ |
+
+**Exemplo - Registro:**s utilizando modelos LSTM.
 
 ---
 
@@ -177,34 +220,42 @@ python manage.py update_portfolios_data
 | POST | `/auth/refresh/` | Renova access token | Sim |
 
 **Exemplo - Registro:**
-```json
+```http
 POST /auth/register/
+X-Api-Key: sua-api-key-aqui
+Content-Type: application/json
+
 {
-  "username": "joao",
   "email": "joao@example.com",
+  "username": "joao",
   "password": "senha123",
-  "first_name": "João",
-  "last_name": "Silva"
+  "name": "João Silva",
+  "phone": "11999999999"
 }
 ```
 
 **Resposta:**
 ```json
 {
-  "message": "User registered successfully",
-  "user": {
-    "id": 1,
-    "username": "joao",
-    "email": "joao@example.com"
-  }
+  "id": 1,
+  "email": "joao@example.com",
+  "username": "joao",
+  "name": "João Silva",
+  "phone": "11999999999",
+  "created_at": "2024-10-16T10:30:00Z"
 }
 ```
 
+---
+
 **Exemplo - Login:**
-```json
+```http
 POST /auth/login/
+X-Api-Key: sua-api-key-aqui
+Content-Type: application/json
+
 {
-  "username": "joao",
+  "email": "joao@example.com",
   "password": "senha123"
 }
 ```
@@ -212,8 +263,60 @@ POST /auth/login/
 **Resposta:**
 ```json
 {
-  "access": "eyJ0eXAiOiJKV1QiLCJhbGc...",
+  "refresh": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "access": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
+  "user": {
+    "id": 1,
+    "email": "joao@example.com",
+    "username": "joao",
+    "name": "João Silva",
+    "phone": "11999999999"
+  }
+}
+```
+
+ **Importante:** 
+- `access` token expira em **30 minutos**
+- `refresh` token expira em **7 dias**
+
+---
+
+**Exemplo - Renovar Access Token:**
+```http
+POST /auth/refresh/
+X-Api-Key: sua-api-key-aqui
+Content-Type: application/json
+
+{
   "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc..."
+}
+```
+
+**Resposta:**
+```json
+{
+  "access": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+}
+```
+
+---
+
+**Exemplo - Logout:**
+```http
+POST /auth/logout/
+X-Api-Key: sua-api-key-aqui
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
+Content-Type: application/json
+
+{
+  "refresh": "eyJ0eXAiOiJKV1QiLCJhbGc..."
+}
+```
+
+**Resposta:**
+```json
+{
+  "detail": "Logout successful."
 }
 ```
 
@@ -221,16 +324,17 @@ POST /auth/login/
 
 ### Dados de Mercado
 
-| Método | Endpoint | Descrição | Autenticação |
+| Método | Endpoint | Descrição | Requer Token |
 |--------|----------|-----------|--------------|
-| GET | `/api/get_all_symbols/` | Lista todos os símbolos disponíveis | Não |
-| GET | `/api/get_asset_historical_data/<symbol>/` | Dados históricos de um ativo | Não |
-| GET | `/api/get_symbols_current_data/` | Dados atuais de múltiplos símbolos | Não |
-| GET | `/api/get_assets_last_data/` | Últimos dados de múltiplos ativos | Não |
+| GET | `/api/get_all_symbols/` | Lista todos os símbolos disponíveis | ✅ |
+| GET | `/api/get_asset_historical_data/<symbol>/` | Dados históricos de um ativo | ✅ |
+| GET | `/api/get_symbols_current_data/` | Dados atuais de múltiplos símbolos | ✅ |
+| GET | `/api/get_assets_last_data/` | Últimos dados de múltiplos ativos | ✅ |
 
 **Exemplo - Símbolos disponíveis:**
 ```http
 GET /api/get_all_symbols/
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 ```
 
 **Resposta:**
@@ -250,6 +354,7 @@ GET /api/get_all_symbols/
 **Exemplo - Dados históricos:**
 ```http
 GET /api/get_asset_historical_data/PETR4.SA/
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 ```
 
 **Resposta:**
@@ -273,6 +378,7 @@ GET /api/get_asset_historical_data/PETR4.SA/
 **Exemplo - Dados atuais (múltiplos símbolos):**
 ```http
 POST /api/get_symbols_current_data/
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 Content-Type: application/json
 
 {
@@ -284,13 +390,14 @@ Content-Type: application/json
 
 ### Análise de Risco
 
-| Método | Endpoint | Descrição | Autenticação |
+| Método | Endpoint | Descrição | Requer Token |
 |--------|----------|-----------|--------------|
-| GET | `/api/get_asset_risk_data/<symbol>/` | Métricas de risco de um ativo | Não |
+| GET | `/api/get_asset_risk_data/<symbol>/` | Métricas de risco de um ativo | ✅ |
 
 **Exemplo:**
 ```http
 GET /api/get_asset_risk_data/PETR4.SA/
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 ```
 
 **Resposta:**
@@ -311,14 +418,14 @@ GET /api/get_asset_risk_data/PETR4.SA/
 
 ### Predições
 
-| Método | Endpoint | Descrição | Autenticação |
+| Método | Endpoint | Descrição | Requer Token |
 |--------|----------|-----------|--------------|
-| GET | `/api/get_portfolio_assets_predictions/` | Predições de ativos do portfólio | Sim |
+| GET | `/api/get_portfolio_assets_predictions/` | Predições de ativos do portfólio | ✅ |
 
 **Exemplo:**
 ```http
-GET /api/get_portfolio_assets_predictions/?portfolio_id=1
-Authorization: Bearer <seu_token>
+GET /api/get_portfolio_assets_predictions/?id=1
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 ```
 
 **Resposta:**
@@ -345,21 +452,24 @@ Authorization: Bearer <seu_token>
 
 ### Portfólios
 
-| Método | Endpoint | Descrição | Autenticação |
+| Método | Endpoint | Descrição | Requer Token |
 |--------|----------|-----------|--------------|
-| POST | `/api/create_portfolio/` | Cria novo portfólio | Sim |
-| GET | `/api/get_user_portfolios/` | Lista portfólios do usuário | Sim |
-| GET | `/api/get_portfolio/` | Detalhes de um portfólio | Sim |
-| POST | `/api/get_and_save_portfolio_pnl/` | Calcula e salva PnL | Sim |
-| GET | `/api/get_portfolio_pnl/` | Histórico de PnL | Sim |
-| GET | `/api/get_portfolio_risk/` | Métricas de risco do portfólio | Sim |
-| POST | `/api/get_optimized_portfolio/` | Otimização de portfólio | Sim |
-| GET | `/api/get_starter_portfolio/` | Portfólio sugerido | Não |
+| POST | `/api/create_portfolio/` | Cria novo portfólio | ✅ |
+| GET | `/api/get_user_portfolios/` | Lista portfólios do usuário | ✅ |
+| GET | `/api/get_portfolio/` | Detalhes de um portfólio | ✅ |
+| POST | `/api/get_and_save_portfolio_pnl/` | Calcula e salva PnL | ✅ |
+| GET | `/api/get_portfolio_pnl/` | Histórico de PnL | ✅ |
+| GET | `/api/get_portfolio_risk/` | Métricas de risco do portfólio | ✅ |
+| GET | `/api/get_optimized_portfolio/` | Otimização de portfólio | ✅ |
+| GET | `/api/get_starter_portfolio/` | Portfólio sugerido | ✅ |
+| POST | `/api/delete_portfolio/` | Deleta um portfólio | ✅ |
+| POST | `/api/add_asset_to_portfolio/` | Adiciona ativo ao portfólio | ✅ |
+| POST | `/api/delete_asset_from_portfolio/` | Remove ativo do portfólio | ✅ |
 
 **Exemplo - Criar portfólio:**
 ```http
 POST /api/create_portfolio/
-Authorization: Bearer <seu_token>
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 Content-Type: application/json
 
 {
@@ -406,7 +516,7 @@ Content-Type: application/json
 **Exemplo - Listar portfólios:**
 ```http
 GET /api/get_user_portfolios/
-Authorization: Bearer <seu_token>
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 ```
 
 **Resposta:**
@@ -428,8 +538,8 @@ Authorization: Bearer <seu_token>
 
 **Exemplo - Obter risco do portfólio:**
 ```http
-GET /api/get_portfolio_risk/?portfolio_id=1
-Authorization: Bearer <seu_token>
+GET /api/get_portfolio_risk/?id=1
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 ```
 
 **Resposta:**
@@ -457,15 +567,9 @@ Authorization: Bearer <seu_token>
 
 **Exemplo - Otimizar portfólio:**
 ```http
-POST /api/get_optimized_portfolio/
-Authorization: Bearer <seu_token>
+GET /api/get_optimized_portfolio/?portfolio_id=1&min_return=0.0006
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc...
 Content-Type: application/json
-
-{
-  "symbols": ["AAPL", "MSFT", "NVDA", "GOOGL", "META"],
-  "target_return": 0.15,
-  "risk_free_rate": 0.045
-}
 ```
 
 **Resposta:**
