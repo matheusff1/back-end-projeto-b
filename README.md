@@ -662,13 +662,13 @@ Rastreia evolução dos portfólios ao longo do tempo.
 
 ##  Rotinas Automáticas
 
-# Atualizar dados de mercado às 19h (após fechamento)
+# Atualizar dados de mercado às 01h
 0 19 * * 1-5 cd /caminho/do/projeto && python manage.py update_market_data
 
-# Atualizar portfólios às 19h30
+# Atualizar portfólios às 01h30
 30 19 * * 1-5 cd /caminho/do/projeto && python manage.py update_portfolios_data
 
-# Executar predições aos domingos às 2h
+# Executar predições  às 02h
 0 2 * * 0 cd /caminho/do/projeto && python manage.py run_and_save_predictions
 
 
