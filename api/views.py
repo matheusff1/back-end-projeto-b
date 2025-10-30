@@ -154,21 +154,40 @@ def get_portfolio(request):
         if not portfolio:
             return JsonResponse({'error': 'Portfolio not found.'}, status=404)
 
+        portfolio_tracking = PortfolioTracking.objects.filter(portfolio=portfolio).order_by('date')
+
+        first_balance = portfolio_tracking.first().balance if portfolio_tracking.exists() else None
+        first_distribution = portfolio_tracking.first().distribution if portfolio_tracking.exists() else None
+        current_balance = portfolio_tracking.last().balance if portfolio_tracking.exists() else None
+        current_distribution = portfolio_tracking.last().distribution if portfolio_tracking.exists() else None
+        current_assets = list(current_distribution.keys()) if current_distribution else []
+
+        portfolio_tracking_data = [
+            {
+                'date': tracking.date.isoformat(),
+                'balance': float(tracking.balance),
+                'distribution': tracking.distribution
+            }
+            for tracking in portfolio_tracking
+        ]
+
         portfolio_data = {
             "id": portfolio.id,
             "name": portfolio.name,
             "description": portfolio.description,
-            "initial_balance": float(portfolio.initial_balance),
-            "current_balance": float(portfolio.current_balance),
-            "assets": portfolio.assets,
-            "initial_distribution": portfolio.initial_distribution,
-            "current_distribution": portfolio.current_distribution,
-            "creation_date": portfolio.created_at.date()
+            "initial_balance": first_balance,
+            "current_balance": current_balance,
+            "assets": current_assets,
+            "initial_distribution": first_distribution,
+            "current_distribution": current_distribution,
+            "creation_date": portfolio.created_at.date().isoformat(),
+            "tracking_data": portfolio_tracking_data
         }
 
         return JsonResponse({'portfolio': portfolio_data}, status=200)
 
     except Exception as e:
+        traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
     
 
@@ -317,11 +336,11 @@ def get_and_save_portfolio_pnl(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-@api_view(['POST'])
+@api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_portfolio_pnl(request):
     user = request.user
-    portfolio_id = request.data.get('id')
+    portfolio_id = request.GET.get('id')
     
     if not portfolio_id:
         return JsonResponse({'error': 'Portfolio ID not provided.'}, status=400)
@@ -416,7 +435,10 @@ def get_portfolio_pnl(request):
         
         total_pnl_value = current_balance - initial_balance
         total_pnl_percent = ((current_balance - initial_balance) / initial_balance * 100) if initial_balance > 0 else 0
-        portfolio_balance_vol = np.log(tracking_df['balance'] / tracking_df['balance'].shift(1)).std() * np.sqrt(252)
+        tracking_df['balance'] = pd.to_numeric(tracking_df['balance'], errors='coerce')
+        returns = tracking_df['balance'] / tracking_df['balance'].shift(1)
+        returns = returns.dropna()
+        portfolio_balance_vol = np.log(returns).std() * np.sqrt(252)
 
 
         return JsonResponse({
@@ -433,6 +455,7 @@ def get_portfolio_pnl(request):
         }, status=200)
     
     except Exception as e:
+        traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
 
 
@@ -574,11 +597,16 @@ def get_portfolio_risk(request):
         portfolio = Portfolio.objects.filter(user=user, id=portfolio_id).first()
         if not portfolio:
             return Response({'error': 'Portfolio not found.'}, status=404)
+    
+        portfolio_current_data = PortfolioTracking.objects.filter(
+            portfolio=portfolio
+        ).order_by('-date').first()
 
-        assets = portfolio.assets
-        symbols = [asset['symbol'] for asset in assets]
+        assets = portfolio_current_data.distribution.keys()
+        print(assets)
+        symbols = list(assets)
 
-        distribution_dict = portfolio.current_distribution or {}
+        distribution_dict = portfolio_current_data.distribution or {}
         distribution = [distribution_dict.get(symbol, 0.0) for symbol in symbols]
 
         symbols_data = MarketData.objects.filter(symbol__in=symbols).order_by('date')
@@ -603,6 +631,7 @@ def get_portfolio_risk(request):
         })
 
     except Exception as e:
+        traceback.print_exc()
         return Response({'error': str(e)}, status=500)
 
 @api_view(['GET'])
@@ -708,9 +737,12 @@ def get_optimized_portfolio(request):
             min_return = float(data.get('min_return', 0.0006))
 
             portfolio = Portfolio.objects.filter(user=user,id=portfolio_id)
-            portfolio_symbols = portfolio[0].assets
+            portfolio_last_data = PortfolioTracking.objects.filter(
+                portfolio=portfolio_id
+            ).order_by('-date').first()
 
-            symbols = [asset['symbol'] for asset in portfolio_symbols]
+            symbols = portfolio_last_data.distribution.keys()
+            symbols = list(symbols)
             symbols_data = MarketData.objects.filter(symbol__in=symbols).order_by('date')
 
             symbols_data = pd.DataFrame(list(symbols_data.values('symbol', 'date', 'close', 'high', 'low', 'open', 'volume')))
@@ -819,6 +851,38 @@ def get_assets_last_data(request):
             return JsonResponse({'last_data': last_data}, status=200)
 
         except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+        
+    return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_symbols_current_data(request):
+    if request.method == 'GET':
+        try:
+            symbols = MarketData.objects.order_by('symbol').values_list('symbol', flat=True).distinct()
+            symbols = [symb for symb in symbols if symb in ALLOWED_SYMBOLS]
+
+            current_data = {}
+            for symbol in symbols:
+                asset_data = MarketData.objects.filter(symbol=symbol).order_by('-date').first()
+                if asset_data:
+                    current_data[symbol] = {
+                        'date': asset_data.date,
+                        'close': float(asset_data.close),
+                        'open': float(asset_data.open),
+                        'high': float(asset_data.high),
+                        'low': float(asset_data.low),
+                        'volume': int(asset_data.volume)
+                    }
+
+            return JsonResponse({'current_data': current_data}, status=200)
+
+        except Exception as e:
+
             return JsonResponse({'error': str(e)}, status=500)
         
     return JsonResponse({'error': 'Invalid request method.'}, status=405)

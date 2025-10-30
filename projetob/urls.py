@@ -39,4 +39,6 @@ urlpatterns = [
     path('api/get_portfolio_assets_predictions/', get_portfolio_assets_predictions, name='get_portfolio_assets_predictions'),
     path('api/get_assets_last_data/', get_assets_last_data, name='get_assets_last_data'),
     path('api/get_portfolio_pnl/', get_portfolio_pnl, name='get_portfolio_pnl'),
+    path('api/get_symbols_current_data/', get_symbols_current_data, name='get_symbols_current_data'),
+    path('api/get_portfolio/', get_portfolio, name='get_portfolio'),
 ]

@@ -89,4 +89,4 @@ class PortfolioTracking(models.Model):
         verbose_name_plural = 'Portfolio Tracking Records'
 
     def __str__(self):
-        return f"{self.portfolio.name} - {self.date} - PnL: {self.pnl}"
+        return f"{self.portfolio.name} - {self.date} - PnL: {self.balance}"

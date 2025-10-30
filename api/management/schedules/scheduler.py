@@ -21,20 +21,20 @@ def start():
 
     scheduler.add_job(
         run_update_market_data_command, 
-        trigger=CronTrigger(hour=19, minute=0),
-        misfire_grace_time=120 
+        trigger=CronTrigger(hour=1, minute=0),
+        misfire_grace_time=240
     )
 
     scheduler.add_job(
         run_predictions_command, 
-        trigger=CronTrigger(hour=20, minute=20),
-        misfire_grace_time=60 
+        trigger=CronTrigger(hour=2, minute=30),
+        misfire_grace_time=120 
     )
 
     scheduler.add_job(
         run_update_portfolios_data,
-        trigger=CronTrigger(hour=23, minute=30),
-        misfire_grace_time=60
+        trigger=CronTrigger(hour=2, minute=15),
+        misfire_grace_time=120
     )
 
     print(f"[{datetime.now()}] Scheduler iniciado...")
