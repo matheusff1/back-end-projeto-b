@@ -660,7 +660,7 @@ Rastreia evolução dos portfólios ao longo do tempo.
 
 ---
 
-## ⏰ Rotinas Automáticas
+##  Rotinas Automáticas
 
 # Atualizar dados de mercado às 19h (após fechamento)
 0 19 * * 1-5 cd /caminho/do/projeto && python manage.py update_market_data
@@ -673,7 +673,7 @@ Rastreia evolução dos portfólios ao longo do tempo.
 
 
 
-## 🚀 Deploy
+##  Deploy
 
 ### Usando ngrok (Desenvolvimento/Testes)
 
